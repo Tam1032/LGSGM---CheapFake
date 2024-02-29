@@ -1,0 +1,26 @@
+gcn_input_dim=self.gcn_output_dim
+gcn_pred_dim=self.gcn_output_dim
+gcn_output_dim=self.gcn_output_dim
+gcn_hidden_dim=self.gcn_hidden_dim
+numb_gcn_layers=self.numb_gcn_layers
+batchnorm=self.batchnorm
+dropout=self.dropout
+activate_fn=self.activate_fn
+numb_words=self.total_cap_words
+embed_dim=self.unit_dim
+init_weight=init_embed_model_weight_cap
+numb_layers=self.rnn_numb_layers
+dropout=self.dropout
+bidirectional=self.rnn_bidirectional
+structure=self.rnn_structure
+
+def __init__(self, input_dim=300, pred_dim=300, hidden_dim=[300], output_dim=300, activate_fn='swish', batchnorm=True, dropout=None, last_layer=False, use_residual=False):
+
+ef __init__(self, gcn_input_dim=300, gcn_pred_dim=300, gcn_output_dim=300, gcn_hidden_dim=[300], numb_gcn_layers=5, batchnorm=True, dropout=None, activate_fn='swish', use_residual=False):
+
+class WordEmbedding(nn.Module):
+    def __init__(self, numb_words, embed_dim=300, init_weight=None, sparse=False):
+
+class RelsModel(nn.Module):
+    def __init__(self, input_dim=300, hidden_dim=512, numb_layers=2, dropout=0.5, bidirectional=False, structure='GRU'):
+

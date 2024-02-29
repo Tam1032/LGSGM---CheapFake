@@ -1,5 +1,6 @@
 # INCLUDE VISUAL FEATURES FOR PREDICATE (optional)
 import random
+import pandas as pd
 import itertools
 import numpy as np
 import torch
@@ -14,23 +15,22 @@ import joblib
 import json
 from functools import partial
 from PIL import Image
+from transformers import AutoTokenizer
+from torch.nn.utils.rnn import pad_sequence
 
-IMAGE_DIR = 'path/to/flickr30k_images'
-OBJ_FT_DIR = './VisualObjectFeatures' # run extract_visual_features.py to get this
-PRED_FT_DIR = './VisualPredFeatures' # run extract_visual_features.py to get this
+model_name = "MoritzLaurer/DeBERTa-v3-base-mnli"#"ynie/roberta-large-snli_mnli_fever_anli_R1_R2_R3-nli"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
 
-def indexing_sent(sent, word2idx, add_start_end=True):
-    words = word_tokenize(sent)
-    if add_start_end:
-        words = ['<start>'] + words + ['<end>']
-    words_idx = []
-    for word in words:
-        try:
-            idx = word2idx[word]
-        except:
-            idx = word2idx['<unk>']
-        words_idx.append(idx)
-    return words_idx
+#IMAGE_DIR = 'path/to/flickr30k_images'
+#IMAGE_DIR = './Cheapfake_Images'
+OBJ_FT_DIR = './Data/train_160000/PENET/VisualObjectFeatures' # run extract_visual_features.py to get this
+PRED_FT_DIR = './Data/train_160000/PENET/VisualPredFeatures' # run extract_visual_features.py to get this
+
+def indexing_sent(sent, tokenizer):
+    tokenize_sentence = tokenizer(sent[0], sent[1], truncation=True)
+    ids = tokenize_sentence['input_ids']
+    mask = tokenize_sentence['attention_mask']
+    return ids, mask
 
 def indexing_rels(rels, word2idx, add_start_end=True):
     rels_idx = []
@@ -98,7 +98,7 @@ def encode_image_sgg_to_matrix(sgg, word2idx_obj, word2idx_pred):
     
     return obj_np, pred_np, edge_np
 
-def encode_caption_sgg_to_matrix(sgg, word2idx):
+def encode_caption_sgg_to_matrix(sgg, word2idx, tokenizer):
     '''
     sgg is dictionary with sent and rels
     sent and rels are lemmatised already
@@ -109,40 +109,49 @@ def encode_caption_sgg_to_matrix(sgg, word2idx):
     sent_to_idx: encoded sentence with <start> and <end> token
     '''
     
-    obj_np = []
-    pred_np = []
-    edge_np = []
+    #obj_np = []
+    #pred_np = []
+    #edge_np = []
     
     # obj_np = np.zeros(len(csgg['labels']), dtype=int)
     # pred_np = np.zeros(len(csgg['sgg']), dtype=int)
     # edge_np = np.zeros((len(csgg['sgg']), 2), dtype=int)
     
-    sent_to_idx = indexing_sent(sent=sgg['sent'], word2idx=word2idx, add_start_end=True) # list
+    sent_to_idx, attention_mask = indexing_sent(sent=sgg['sent'], tokenizer=tokenizer) # list
+    graph_sentence = [{} for i in range(2)]
     
-    labels = [x[0] for x in sgg['rels']] + [x[2] for x in sgg['rels']]
-    labels = np.unique(np.asarray(labels)).tolist()
-
-    for idx, obj in enumerate(labels):
-        try:
-            label_to_idx = word2idx[obj]
-        except:
-            label_to_idx = word2idx['<unk>']
-        obj_np.append(label_to_idx)   
+    for i in range(2):
+        rels = sgg['rels'][i]
+        graph_sentence[i] = dict()
         
-    for idx, rel in enumerate(sgg['rels']):
-        sub, pred_label, obj = rel[0], rel[1], rel[2]
-        sub_pos = labels.index(sub)
-        obj_pos = labels.index(obj)
-        edge_np.append([int(sub_pos), int(obj_pos)])
+        graph_sentence[i]['obj_np'] = []
+        graph_sentence[i]['pred_np'] = []
+        graph_sentence[i]['edge_np'] = []
+        
+        labels = [x[0] for x in rels] + [x[2] for x in rels]
+        labels = np.unique(np.asarray(labels)).tolist()
+        
+        for idx, obj in enumerate(labels):
+            try:
+                label_to_idx = word2idx[obj]
+            except:
+                label_to_idx = word2idx['<unk>']
+            graph_sentence[i]['obj_np'].append(label_to_idx)   
+        
+        for idx, rel in enumerate(rels):
+            sub, pred_label, obj = rel[0], rel[1], rel[2]
+            sub_pos = labels.index(sub)
+            obj_pos = labels.index(obj)
+            graph_sentence[i]['edge_np'].append([int(sub_pos), int(obj_pos)])
     
-    pred_np = indexing_rels(rels=sgg['rels'], word2idx=word2idx, add_start_end=True) # list of list
-    # pred: [<start> , sub , pred, obj, <end>]
-    len_pred = [len(x) for x in pred_np] # len of a pred <start> sub, pred (can be multiple words), obj <end>
-    obj_np = np.asarray(obj_np, dtype=int)
-    #pred_np = np.asarray(pred_np, dtype=int)
-    edge_np = np.asarray(edge_np, dtype=int)
+        graph_sentence[i]['pred_np'] = indexing_rels(rels=rels, word2idx=word2idx, add_start_end=True) # list of list
+        # pred: [<start> , sub , pred, obj, <end>]
+        graph_sentence[i]['len_pred'] = [len(x) for x in graph_sentence[i]['pred_np']] # len of a pred <start> sub, pred (can be multiple words), obj <end>
+        graph_sentence[i]['obj_np'] = np.asarray(graph_sentence[i]['obj_np'], dtype=int)
+        #pred_np = np.asarray(pred_np, dtype=int)
+        graph_sentence[i]['edge_np'] = np.asarray(graph_sentence[i]['edge_np'], dtype=int)
     
-    return obj_np, pred_np, edge_np, len_pred, sent_to_idx # obj and edge is numpy array, other is list
+    return graph_sentence, sent_to_idx, attention_mask # obj and edge is numpy array, other is list
 
 # ====== IMAGE DATASET ======
 # Only use for validating entire dataset
@@ -253,12 +262,13 @@ def make_ImageDataLoader(dataset, transform, batch_size=4, num_workers=8, pin_me
 # Only use for validating entire dataset
 # Generate caption sgg dataset only (sentence + sgg)
 class CaptionDataset(Dataset):
-    def __init__(self, caption_sgg, word2idx, numb_sample=None):
+    def __init__(self, caption_sgg, word2idx, tokenizer, numb_sample=None):
         # Do something
         self.caption_sgg = caption_sgg
         self.list_caption_id = list(self.caption_sgg.keys())
         self.numb_sample = numb_sample
         self.word2idx = word2idx
+        self.tokenizer = tokenizer
         if self.numb_sample is None or self.numb_sample <= 0 or self.numb_sample > len(self.caption_sgg):
             self.numb_sample = len(self.caption_sgg)
             assert self.numb_sample == len(self.list_caption_id)
@@ -268,8 +278,8 @@ class CaptionDataset(Dataset):
     
     def __getitem__(self, idx):
         caption_id = self.list_caption_id[idx]
-        cap_obj_np, cap_pred_np, cap_edge_np, cap_len_pred, cap_sent_np = encode_caption_sgg_to_matrix(
-            sgg=self.caption_sgg[caption_id], word2idx=self.word2idx)
+        cap_obj_np, cap_pred_np, cap_edge_np, cap_len_pred, cap_sent_np, cap_mask = encode_caption_sgg_to_matrix(
+            sgg=self.caption_sgg[caption_id], word2idx=self.word2idx, tokenizer=self.tokenizer)
         
         result = dict()
         result['object'] = cap_obj_np
@@ -331,7 +341,7 @@ class PairGraphDataset(Dataset):
     '''
     Generate pair of graphs which from image and caption
     '''
-    def __init__(self, image_sgg, caption_sgg, image_caption_matching, caption_image_matching, word2idx_cap, word2idx_img_obj, word2idx_img_pred, numb_sample=None):
+    def __init__(self, image_sgg, caption_sgg, image_caption_matching, caption_image_matching, word2idx_cap, tokenizer, word2idx_img_obj, word2idx_img_pred, numb_sample=None):
         '''
         image_sgg: dictionary of scene graph from images with format image_sgg[image_id]['rels'] and image_sgg[image_id]['labels']
         caption_sgg: dictionary of scene graph from captions with format caption_sgg[cap_id]['rels'] and caption_sgg[cap_id]['sent']
@@ -353,6 +363,7 @@ class PairGraphDataset(Dataset):
         self.word2idx_img_obj = word2idx_img_obj
         self.word2idx_img_pred = word2idx_img_pred
         self.list_match_pairs = []
+        self.tokenizer = tokenizer
         for caption_id in self.list_caption_id:
             image_id = self.caption_image_matching[caption_id]
             self.list_match_pairs.append((image_id, caption_id))
@@ -386,8 +397,8 @@ class PairGraphDataset(Dataset):
             img_obj_np, img_pred_np, img_edge_np = encode_image_sgg_to_matrix(sgg=self.image_sgg[imgid],
                                                                               word2idx_obj=self.word2idx_img_obj,
                                                                               word2idx_pred=self.word2idx_img_pred)
-            cap_obj_np, cap_pred_np, cap_edge_np, cap_len_pred, cap_sent_np = encode_caption_sgg_to_matrix(
-                sgg=self.caption_sgg[capid], word2idx=self.word2idx_cap)
+            cap_obj_np, cap_pred_np, cap_edge_np, cap_len_pred, cap_sent_np, cap_mask = encode_caption_sgg_to_matrix(
+                sgg=self.caption_sgg[capid], word2idx=self.word2idx_cap, tokenizer=self.tokenizer)
         except Exception as e:
             print(e)
             print(f"Error in {sample}")
@@ -404,7 +415,7 @@ class PairGraphDataset(Dataset):
         result['image']['numb_pred'] = len(img_pred_np)
         result['image']['id'] = imgid
         result['image']['obj_bboxes'] = self.image_sgg[imgid]['bbox']
-        rels = self.image_sgg[image_id]['rels']
+        rels = self.image_sgg[imgid]['rels']
         pred_bboxes = []
         for idx, rel in enumerate(rels):
             s, p, o = rel
@@ -426,6 +437,7 @@ class PairGraphDataset(Dataset):
         result['caption']['predicate'] = cap_pred_np # [list of list]
         result['caption']['edge'] = cap_edge_np # [numpy array (numb_pred, 2)]
         result['caption']['sent'] = cap_sent_np # [list]
+        result['caption']['mask'] = cap_mask # attention mask
         result['caption']['numb_obj'] = len(cap_obj_np) # [scalar]
         result['caption']['len_pred'] = cap_len_pred # len of each predicate in a caption [list]
         result['caption']['numb_pred'] = len(cap_pred_np) # number of predicate in a caption [scalar]
@@ -460,6 +472,7 @@ def pair_collate_fn(batch, transform):
     caption_numb_pred = []
     caption_len_pred = []
     caption_sent = []
+    caption_mask = []
     caption_len_sent = []
     caption_obj_offset = 0
 
@@ -489,12 +502,17 @@ def pair_collate_fn(batch, transform):
         caption_numb_obj += [ba['caption']['numb_obj']]
         caption_numb_pred += [ba['caption']['numb_pred']]
         caption_sent += [torch.LongTensor(ba['caption']['sent'])]
+        caption_mask += [torch.LongTensor(ba['caption']['mask'])]
         caption_len_sent += [len(ba['caption']['sent'])]
         # [len p1, len p2, .. len pj (from 1st sample, j+1 pred), len pt, ...len pt+k, ...(2nd sample, k+1 pred)]
         caption_len_pred += ba['caption']['len_pred'] 
         
         image_id += [ba['image']['id']]
         caption_id += [ba['caption']['id']]
+
+    #Pad sentence and attention mask
+    caption_sent = pad_sequence(caption_sent, batch_first=True)
+    caption_mask = pad_sequence(caption_mask, batch_first=True)
     
     # reshape edge to [n_pred, 2] size
     image_edge = image_edge.reshape(-1, 2)
@@ -547,69 +565,62 @@ class PairGraphPrecomputeDataset(Dataset):
     '''
     Generate pair of graphs which from image and caption
     '''
-    def __init__(self, image_sgg, caption_sgg, image_caption_matching, caption_image_matching, word2idx_cap, word2idx_img_obj, word2idx_img_pred, effnet='b0', numb_sample=None, obj_ft_dir=OBJ_FT_DIR, pred_ft_dir=PRED_FT_DIR):
+    def __init__(self, image_sgg, caption_sgg, word2idx_cap, word2idx_img_obj, word2idx_img_pred, samples, tokenizer=tokenizer, effnet='b0', obj_ft_dir=OBJ_FT_DIR, pred_ft_dir=PRED_FT_DIR):
         '''
         image_sgg: dictionary of scene graph from images with format image_sgg[image_id]['rels'] and image_sgg[image_id]['labels']
         caption_sgg: dictionary of scene graph from captions with format caption_sgg[cap_id]['rels'] and caption_sgg[cap_id]['sent']
         Note that caption_sgg and image_sgg are all lemmatised
-        image_caption_matching: dictionary describes which image matches which caption with format image_caption_matching[image_id] = [cap_id_1, cap_id_2, ...]
-        caption_image_matching: reverse dictionary of above caption_image_matching[cap_id] = image_id
         word2idx: dictionary to map words into index for learning embedding
         numb_sample: int indicating number of sample in the dataset
         '''
         # Do something
+        print(pred_ft_dir)
         self.OBJ_FT_DIR = obj_ft_dir
         self.PRED_FT_DIR = pred_ft_dir
         self.effnet = effnet
         self.image_sgg = image_sgg
         self.caption_sgg = caption_sgg
-        self.image_caption_matching = image_caption_matching
-        self.caption_image_matching = caption_image_matching
-        self.list_image_id = list(self.image_caption_matching.keys())
-        self.list_caption_id = list(self.caption_image_matching.keys())
-        self.numb_sample = numb_sample
         self.word2idx_cap = word2idx_cap
         self.word2idx_img_obj = word2idx_img_obj
         self.word2idx_img_pred = word2idx_img_pred
-        self.list_match_pairs = []
-        for caption_id in self.list_caption_id:
-            image_id = self.caption_image_matching[caption_id]
-            self.list_match_pairs.append((image_id, caption_id))
+        self.tokenizer = tokenizer
         # self.set_match_pairs = set(self.list_match_pairs)
-        self.numb_pairs = len(self.list_match_pairs)
         
-        if self.numb_sample is None:
-            self.numb_sample = self.numb_pairs
+        self.numb_sample = len(samples)
+        self.samples = samples
             
-    def create_pairs(self, seed=1509): # Have to run this function at the beginning of every epoch
+    #def create_pairs(self, seed=1509): # Have to run this function at the beginning of every epoch
         # Shuffle Item
-        random.seed(seed)
-        print('Creating Pairs of Graphs ...')
-        sample_match = self.list_match_pairs.copy()
-        if self.numb_sample <= self.numb_pairs: 
-            random.shuffle(sample_match)
-            sample_match = sample_match[0:self.numb_sample]
-        else:
-            numb_gen = self.numb_sample - self.numb_pairs
-            pairs_gen = random.choices(self.list_match_pairs, k=numb_gen)
-            sample_match = sample_match + pairs_gen
-            random.shuffle(sample_match)
-        self.samples = sample_match
+        #random.seed(seed)
+        #print('Creating Pairs of Graphs ...')
+        #sample_match = self.list_match_pairs.copy()
+        #if self.numb_sample <= self.numb_pairs: 
+            #random.shuffle(sample_match)
+            #sample_match = sample_match[0:self.numb_sample]
+        #else:
+            #numb_gen = self.numb_sample - self.numb_pairs
+            #pairs_gen = random.choices(self.list_match_pairs, k=numb_gen)
+            #sample_match = sample_match + pairs_gen
+            #random.shuffle(sample_match)
+        #self.samples = sample_match
     
     def __getitem__(self, i):
         # Get item
-        sample = self.samples[i]
-        imgid, capid = sample
+        sample = self.samples.loc[i]
+        imgid, capid, label = sample
 
         try:
             img_obj_np, img_pred_np, img_edge_np = encode_image_sgg_to_matrix(sgg=self.image_sgg[imgid],
                                                                               word2idx_obj=self.word2idx_img_obj,
                                                                               word2idx_pred=self.word2idx_img_pred)
-            cap_obj_np, cap_pred_np, cap_edge_np, cap_len_pred, cap_sent_np = encode_caption_sgg_to_matrix(
-                sgg=self.caption_sgg[capid], word2idx=self.word2idx_cap)
+            graph_sentence, cap_sent_np, cap_mask = encode_caption_sgg_to_matrix(sgg=self.caption_sgg[capid], 
+                                                                                 word2idx=self.word2idx_cap, tokenizer=self.tokenizer)
         except Exception as e:
+            print(len(self.image_sgg))
+            print(self.image_sgg[imgid])
             print(e)
             print(f"Error in {sample}")
+            print(sample)
             
         result = dict()
         result['image'] = dict()
@@ -625,14 +636,19 @@ class PairGraphPrecomputeDataset(Dataset):
         result['image']['object_ft'] = torch.tensor(joblib.load(f"{self.OBJ_FT_DIR}_{self.effnet}/{imgid[:-4]}.joblib")) # n_obj, ft_dim
         result['image']['pred_ft'] = torch.tensor(joblib.load(f"{self.PRED_FT_DIR}_{self.effnet}/{imgid[:-4]}.joblib")) # n_obj, ft_dim
         # All is list
-        result['caption']['object'] = cap_obj_np # [numpy array (numb obj)]
-        result['caption']['predicate'] = cap_pred_np # [list of list]
-        result['caption']['edge'] = cap_edge_np # [numpy array (numb_pred, 2)]
         result['caption']['sent'] = cap_sent_np # [list]
-        result['caption']['numb_obj'] = len(cap_obj_np) # [scalar]
-        result['caption']['len_pred'] = cap_len_pred # len of each predicate in a caption [list]
-        result['caption']['numb_pred'] = len(cap_pred_np) # number of predicate in a caption [scalar]
+        result['caption']['mask'] = cap_mask
         result['caption']['id'] = capid
+        for i in range(2):
+            result['caption_'+str(i)] = dict()
+            result['caption_'+str(i)]['object'] = graph_sentence[i]['obj_np'] # [numpy array (numb obj)]
+            result['caption_'+str(i)]['predicate'] = graph_sentence[i]['pred_np'] # [list of list]
+            result['caption_'+str(i)]['edge'] = graph_sentence[i]['edge_np'] # [numpy array (numb_pred, 2)]
+            result['caption_'+str(i)]['numb_obj'] = len(graph_sentence[i]['obj_np']) # [scalar]
+            result['caption_'+str(i)]['len_pred'] = graph_sentence[i]['len_pred'] # len of each predicate in a caption [list]
+            result['caption_'+str(i)]['numb_pred'] = len(graph_sentence[i]['pred_np']) # number of predicate in a caption [scalar]
+        result['label'] = label
+        #result['match_label'] = label
         # result['caption']['sgg'] = self.caption_sgg[sample[1]] # for debug
         # result['image']['sgg'] = self.image_sgg[sample[0]] # for debug
         
@@ -655,19 +671,30 @@ def pair_precompute_collate_fn(batch):
     image_obj_offset = 0
     image_obj_ft = []
     image_pred_ft = []
-    
-    caption_obj = np.array([]) 
-    caption_pred = []
-    caption_edge = np.array([]) 
-    caption_numb_obj = [] 
-    caption_numb_pred = []
-    caption_len_pred = []
+
     caption_sent = []
+    caption_mask = []
     caption_len_sent = []
-    caption_obj_offset = 0
+    caption_obj_1 = np.array([]) 
+    caption_pred_1 = []
+    caption_edge_1 = np.array([]) 
+    caption_numb_obj_1 = [] 
+    caption_numb_pred_1 = []
+    caption_len_pred_1 = []
+    caption_obj_offset_1 = 0
+    caption_obj_2 = np.array([]) 
+    caption_pred_2 = []
+    caption_edge_2 = np.array([]) 
+    caption_numb_obj_2 = [] 
+    caption_numb_pred_2 = []
+    caption_len_pred_2 = []
+    caption_obj_offset_2 = 0
 
     caption_id = [] # for debug
     image_id = [] # for debug
+
+    labels = np.array([]) 
+    #match_labels = np.array([]) 
     
     for ba in batch:
         # Image SGG
@@ -681,27 +708,50 @@ def pair_precompute_collate_fn(batch):
         image_numb_pred += [ba['image']['numb_pred']]
         image_obj_ft.append(ba['image']['object_ft'])
         image_pred_ft.append(ba['image']['pred_ft'])
-        
-        # Caption SGG
-        caption_obj = np.append(caption_obj, ba['caption']['object'])
-        for idx_row in range(ba['caption']['edge'].shape[0]):
-            edge = ba['caption']['edge'][idx_row] + caption_obj_offset
-            caption_pred += [torch.LongTensor(ba['caption']['predicate'][idx_row])]
-            caption_edge = np.append(caption_edge, edge)
-        caption_obj_offset += ba['caption']['numb_obj']
-        caption_numb_obj += [ba['caption']['numb_obj']]
-        caption_numb_pred += [ba['caption']['numb_pred']]
+
+        # Caption whole sentences
         caption_sent += [torch.LongTensor(ba['caption']['sent'])]
+        caption_mask += [torch.LongTensor(ba['caption']['mask'])]
         caption_len_sent += [len(ba['caption']['sent'])]
+        
+        # Caption SGG_1
+        caption_obj_1 = np.append(caption_obj_1, ba['caption_0']['object'])
+        for idx_row in range(ba['caption_0']['edge'].shape[0]):
+            edge_1 = ba['caption_0']['edge'][idx_row] + caption_obj_offset_1
+            caption_pred_1 += [torch.LongTensor(ba['caption_0']['predicate'][idx_row])]
+            caption_edge_1 = np.append(caption_edge_1, edge_1)
+        caption_obj_offset_1 += ba['caption_0']['numb_obj']
+        caption_numb_obj_1 += [ba['caption_0']['numb_obj']]
+        caption_numb_pred_1 += [ba['caption_0']['numb_pred']]
+        
         # [len p1, len p2, .. len pj (from 1st sample, j+1 pred), len pt, ...len pt+k, ...(2nd sample, k+1 pred)]
-        caption_len_pred += ba['caption']['len_pred'] 
+        caption_len_pred_1 += ba['caption_0']['len_pred']
+
+        # Caption_SGG_2
+        caption_obj_2 = np.append(caption_obj_2, ba['caption_1']['object'])
+        for idx_row in range(ba['caption_1']['edge'].shape[0]):
+            edge_2 = ba['caption_1']['edge'][idx_row] + caption_obj_offset_2
+            caption_pred_2 += [torch.LongTensor(ba['caption_1']['predicate'][idx_row])]
+            caption_edge_2 = np.append(caption_edge_2, edge_2)
+        caption_obj_offset_2 += ba['caption_1']['numb_obj']
+        caption_numb_obj_2 += [ba['caption_1']['numb_obj']]
+        caption_numb_pred_2 += [ba['caption_1']['numb_pred']]
+        caption_len_pred_2 += ba['caption_1']['len_pred']
         
         image_id += [ba['image']['id']]
         caption_id += [ba['caption']['id']]
+
+        labels = np.append(labels, ba['label']) 
+        #match_labels = np.append(match_labels, ba['match_label']) 
+
+    #Pad sentence and attention mask
+    caption_sent = pad_sequence(caption_sent, batch_first=True)
+    caption_mask = pad_sequence(caption_mask, batch_first=True)
     
     # reshape edge to [n_pred, 2] size
     image_edge = image_edge.reshape(-1, 2)
-    caption_edge = caption_edge.reshape(-1, 2)
+    caption_edge_1 = caption_edge_1.reshape(-1, 2)
+    caption_edge_2 = caption_edge_2.reshape(-1, 2)
     
     image_obj = torch.LongTensor(image_obj)
     image_pred = torch.LongTensor(image_pred)
@@ -709,9 +759,11 @@ def pair_precompute_collate_fn(batch):
     #image_numb_obj = torch.LongTensor(image_numb_obj)
     #image_numb_pred = torch.LongTensor(image_numb_pred)
     
-    caption_obj = torch.LongTensor(caption_obj)
+    caption_obj_1 = torch.LongTensor(caption_obj_1)
+    caption_obj_2 = torch.LongTensor(caption_obj_2)
     # caption_pred = torch.LongTensor(caption_pred)
-    caption_edge = torch.LongTensor(caption_edge)
+    caption_edge_1 = torch.LongTensor(caption_edge_1)
+    caption_edge_2 = torch.LongTensor(caption_edge_2)
     #caption_numb_obj = torch.LongTensor(caption_numb_obj)
     #caption_numb_pred = torch.LongTensor(caption_numb_pred)
     # caption_sent = torch.LongTensor(caption_pos_sent)
@@ -720,11 +772,18 @@ def pair_precompute_collate_fn(batch):
     image_pred_ft = torch.cat(image_pred_ft, dim=0) # tensor [total_pred, dim]
             
     assert image_edge.shape[0] == image_pred.shape[0]
-    assert caption_edge.shape[0] == sum(caption_numb_pred)
+    assert caption_edge_1.shape[0] == sum(caption_numb_pred_1)
+    assert caption_edge_2.shape[0] == sum(caption_numb_pred_2)
+
+    labels = labels.reshape(-1,1)
+    labels = torch.FloatTensor(labels)
+    #match_labels = match_labels.reshape(-1)
+    #match_labels = torch.tensor(match_labels)
 
     return image_obj, image_obj_ft, image_pred, image_pred_ft, image_edge, image_numb_obj, image_numb_pred,\
-           caption_obj, caption_pred, caption_edge,  caption_sent,\
-           caption_numb_obj, caption_numb_pred, caption_len_pred, caption_len_sent#, image_id, caption_id
+           caption_obj_1, caption_pred_1, caption_edge_1, caption_numb_obj_1, caption_numb_pred_1, caption_len_pred_1,\
+           caption_obj_2, caption_pred_2, caption_edge_2, caption_numb_obj_2, caption_numb_pred_2, caption_len_pred_2,\
+           caption_sent, caption_mask, caption_len_sent, labels#, image_id, caption_id, match_labels
 
 def make_PairGraphPrecomputeDataLoader(dataset, batch_size=4, num_workers=8, pin_memory=True, shuffle=True):
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=pair_precompute_collate_fn, pin_memory=pin_memory, num_workers=num_workers, shuffle=shuffle)

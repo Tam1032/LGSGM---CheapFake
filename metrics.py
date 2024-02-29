@@ -4,7 +4,7 @@ Calculate recall@k
 import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.metrics.ranking import roc_auc_score
+from sklearn.metrics import roc_auc_score
 from torch.nn.utils.rnn import pad_sequence
 device = torch.device('cuda:0')
 from torch.autograd import Variable

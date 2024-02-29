@@ -18,7 +18,7 @@ device = torch.device('cuda:0')
 import torchvision.transforms as transforms
 from efficientnet_pytorch import EfficientNet
 
-IMAGE_DIR = 'path/to/flickr30k_images' # list of images
+IMAGE_DIR = 'D:/Research Data/caption_image/public_test_mmsys' # list of images
 DATA_DIR = './Data'
 
 list_image_size = [224, 240, 260, 300, 380, 456, 528, 600] # wrt efficientnet b0 to b7
@@ -64,7 +64,7 @@ def image_collate_fn(batch, transform):
             offset+=1
     return image_id, image_obj_ft,  n_obj
 
-def make_ImageDataLoader(dataset, transform, batch_size=4, num_workers=8, pin_memory=True, shuffle=False):
+def make_ImageDataLoader(dataset, transform, batch_size=4, num_workers=0, pin_memory=True, shuffle=False):
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=partial(image_collate_fn, transform=transform), pin_memory=pin_memory, num_workers=num_workers, shuffle=shuffle)
     return dataloader
 
@@ -118,7 +118,7 @@ def image_pred_collate_fn(batch, transform):
             offset+=1
     return image_id, image_pred_ft,  n_pred
 
-def make_ImagePredDataLoader(dataset, transform, batch_size=4, num_workers=8, pin_memory=True, shuffle=False):
+def make_ImagePredDataLoader(dataset, transform, batch_size=4, num_workers=0, pin_memory=True, shuffle=False):
     dataloader = DataLoader(dataset, batch_size=batch_size, collate_fn=partial(image_pred_collate_fn, transform=transform), pin_memory=pin_memory, num_workers=num_workers, shuffle=shuffle)
     return dataloader
 
@@ -139,9 +139,12 @@ class Visual_Feature(nn.Module):
         x = x.flatten(start_dim=1)
         return x
     
-def main_obj(subset='train', effnet='b0'):
-    images_data = joblib.load(f"{DATA_DIR}/flickr30k_{subset}_lowered_images_data.joblib")
-    SAVE_DIR = f'{DATA_DIR}/VisualObjectFeatures_{effnet}'
+def main_obj(subset='train', effnet='b0', size="4000"):
+    #f = open(f"{DATA_DIR}/results1.json")
+    #images_data = json.load(f)
+    #f.close()
+    images_data = joblib.load(f"{DATA_DIR}/cheapfake_{subset}_lowered_images_data_neural_motif.joblib")
+    SAVE_DIR = f'{DATA_DIR}/{subset}/Neural_Motif/VisualObjectFeatures_{effnet}'
     dts = ImageDataset(images_data)
     dtld = make_ImageDataLoader(dts, transform_val, batch_size=4, shuffle=False)
     visual_ft_model = Visual_Feature(effnet)
@@ -169,10 +172,14 @@ def main_obj(subset='train', effnet='b0'):
                 temp = image_ft[offset : offset + n_obj, :]
                 joblib.dump(temp, f"{SAVE_DIR}/{imageid[:-4]}.joblib")
                 offset += n_obj
+    
 
-def main_pred(subset='train', effnet='b0'):
-    images_data = joblib.load(f"{DATA_DIR}/flickr30k_{subset}_lowered_images_data.joblib")
-    SAVE_DIR = f"{DATA_DIR}/VisualPredFeatures_{effnet}"
+def main_pred(subset='train', effnet='b0', size='4000'):
+    #f = open(f"{DATA_DIR}/results1.json")
+    #images_data = json.load(f)
+    #f.close()
+    images_data = joblib.load(f"{DATA_DIR}/cheapfake_{subset}_lowered_images_data_neural_motif.joblib")
+    SAVE_DIR = f"{DATA_DIR}/{subset}/Neural_Motif/VisualPredFeatures_{effnet}"
     dts = ImagePredDataset(images_data)
     dtld = make_ImagePredDataLoader(dts, transform_val, batch_size=4, shuffle=False)
     visual_ft_model = Visual_Feature(effnet)
@@ -204,12 +211,12 @@ def main_pred(subset='train', effnet='b0'):
                 offset += n_pred
                     
 print('Processing Obj ...')
-main_obj(subset='train', effnet='b5')
+#main_obj(subset='train', effnet='b5', size="4000")
 #main_obj(subset='val', effnet='b5')
-#main_obj(subset='test', effnet='b5')
+main_obj(subset='test', effnet='b5')
 
 print('Processing Pred ...')
-main_pred(subset='train', effnet='b5')
+#main_pred(subset='train', effnet='b5', size="4000")
 #main_pred(subset='val', effnet='b5')
-#main_pred(subset='test', effnet='b5')
+main_pred(subset='test', effnet='b5')
 

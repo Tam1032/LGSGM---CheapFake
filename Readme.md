@@ -1,13 +1,9 @@
 # A Deep Local and Global Scene Graph Matching for Image-Text Retrieval
 
-This is the repository of the **A Deep Local and Global Scene Graph Matching for Image-Text Retrieval** [paper](https://arxiv.org/abs/2106.02400) which is accepted in SOMET2021. This research is inspired by the SGM [paper](https://arxiv.org/abs/1910.05134) and can be considered as an major improvement of it. The comparison can be fully described in our paper.
+This is the repository of the **Multimodal scene graph matching for cheapfakes detection** which is under review in ICMR2024. This research is inspired by the SGM and LGSGM [paper](https://arxiv.org/abs/2106.02400).
 
-Our code is mostly based on the SGM original code.
+Our code is mostly based on the LGSGM original [code](https://github.com/m2man/LGSGM).
 
-## Update
-For those who are interested in MSCOCO Data, I have uploaded the preprocess data and also the original scene graph extracted from images and their captions. You can find them [here](https://drive.google.com/drive/folders/1Q1Msy6kV0pzZ7uxrDjDQW34Ta9CucI4i?usp=sharing). The original data is given by the authors of the SGM model.
-
-The presentation slide in the SOMET2021 is [here](https://docs.google.com/presentation/d/1zR-XtnmdxbDeee5_2MCPG4TyIsojyZEwelqUSLpzVck/edit?usp=sharing).
 
 ## 1. Requirements
 Please install packages in the ```requirements.txt```. The project is implemented with python 3.7.9
@@ -21,14 +17,6 @@ The model also need the visual features which are the embedded vector of objects
 You can run the ```main_train.py``` script to perform either training or evaluating the model. Our pretrained model can be found [here](https://drive.google.com/drive/folders/100t_GxbhycwfQO82cz-7Xfkn8_t69_Vz?usp=sharing). Please download it and place in **Report folder**.
 
 ## 4. Contact
-For any issue or comment, you can directly email me at manh.nguyen5@mail.dcu.ie
+For any issue or comment, you can directly email me at tamnm1032@gmail.com
 
 For citation, you can add the bibtex as following:
-```
-@article{nguyen2021deep,
-  title={A Deep Local and Global Scene-Graph Matching for Image-Text Retrieval},
-  author={Nguyen, Manh-Duy and Nguyen, Binh T and Gurrin, Cathal},
-  journal={arXiv preprint arXiv:2106.02400},
-  year={2021}
-}
-```
