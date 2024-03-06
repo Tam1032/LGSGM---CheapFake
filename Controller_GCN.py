@@ -46,7 +46,7 @@ images_data_train = joblib.load(f"{DATA_DIR}/train_{size}/cheapfake_{subset}_low
 caps_data_train = joblib.load(f"{DATA_DIR}/train_{size}/cheapfake_{subset}_lowered_caps_data_{size}.joblib")#_{size}
 df_train = pd.read_csv(f"{DATA_DIR}/train_{size}/label_file_{subset}_{size}.csv")#
 
-subset = 'test'
+subset = 'val'
 images_data_val = joblib.load(f"{DATA_DIR}/{subset}/cheapfake_{subset}_lowered_images_data.joblib") #_neural_motif
 caps_data_val = joblib.load(f"{DATA_DIR}/{subset}/cheapfake_{subset}_lowered_caps_data.joblib")
 df_val = pd.read_csv(f"{DATA_DIR}/{subset}/label_file_{subset}.csv") #Neural_Motif
