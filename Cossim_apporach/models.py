@@ -528,7 +528,7 @@ class SentenceModel(nn.Module):
         #outputs = self.model(input_ids=input_ids.to(device), attention_mask=attention_mask.to(device))
         prediction = torch.softmax(outputs["logits"], dim=1)
         #pooled_output = outputs.last_hidden_state[:, 0] #.pooler_output
-        # return a tensor of size 768
+        # return 3 values
         return prediction
 
 # Relations Model (for caption) (RNN)    
