@@ -4,7 +4,7 @@
 from data_utils import *
 import models as md
 from metrics import *
-from torch.nn import BCELoss, CosineEmbeddingLoss
+from torch.nn import BCELoss
 from retrieval_utils import *
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 import itertools
@@ -17,7 +17,8 @@ from torch.autograd import Variable
 import os
 import torchvision.transforms as transforms
 import numpy as np
-import pandas as pd
+from transformers import AutoTokenizer
+
 
 device = torch.device('cuda:0')
 #device = torch.device('cpu')
@@ -25,11 +26,9 @@ non_blocking = True
 # device = torch.cuda.set_device(0)
     
 DATA_DIR = './Data'
-subset = 'train'
-size = '160000'
 
 #word2idx_cap = joblib.load(f"../NewData/flickr30k_caps_word2idx.joblib") # This dictionary include the above
-word2idx_cap = joblib.load(f"{DATA_DIR}/train_{size}/cheapfake_lowered_caps_word2idx_train_{size}.joblib")
+word2idx_cap = joblib.load(f"{DATA_DIR}/train/cheapfake_lowered_caps_word2idx_train_80000.joblib")
 word2idx_img_obj = joblib.load(f"{DATA_DIR}/flickr30k_lowered_img_obj_word2idx.joblib") 
 word2idx_img_pred = joblib.load(f"{DATA_DIR}/flickr30k_lowered_img_pred_word2idx.joblib") 
 
@@ -39,21 +38,23 @@ TOTAL_IMG_OBJ = len(word2idx_img_obj)
 TOTAL_IMG_PRED = len(word2idx_img_pred)
 
 # lemmatized or lowered
-#subset = "test"
+#images_data_train = joblib.load(f"{DATA_DIR}/flickr30k_{subset}_lowered_images_data.joblib")
+#caps_data_train = joblib.load(f"{DATA_DIR}/flickr30k_{subset}_lowered_caps_data.joblib")
 #images_data_train = joblib.load(f"{DATA_DIR}/visual_test_100_images.joblib")
 #caps_data_train = joblib.load(f"{DATA_DIR}/caption_test_100_images.joblib")
-images_data_train = joblib.load(f"{DATA_DIR}/train_{size}/cheapfake_{subset}_lowered_images_data_{size}.joblib")#_{size} _neural_motif
-caps_data_train = joblib.load(f"{DATA_DIR}/train_{size}/cheapfake_{subset}_lowered_caps_data_{size}.joblib")#_{size}
-df_train = pd.read_csv(f"{DATA_DIR}/train_{size}/label_file_{subset}_{size}.csv")#
 
-subset = 'val'
-images_data_val = joblib.load(f"{DATA_DIR}/{subset}/cheapfake_{subset}_lowered_images_data.joblib") #_neural_motif
+subset = 'test'
+#images_data_val = joblib.load(f"{DATA_DIR}/flickr30k_{subset}_lowered_images_data.joblib")
+#caps_data_val = joblib.load(f"{DATA_DIR}/flickr30k_{subset}_lowered_caps_data.joblib")
+#images_data_val = joblib.load(f"{DATA_DIR}/visual_test_100_images.joblib")
+#caps_data_val = joblib.load(f"{DATA_DIR}/caption_test_100_images.joblib")
+images_data_val = joblib.load(f"{DATA_DIR}/{subset}/cheapfake_{subset}_lowered_images_data_Pe-NET.joblib")
 caps_data_val = joblib.load(f"{DATA_DIR}/{subset}/cheapfake_{subset}_lowered_caps_data.joblib")
-df_val = pd.read_csv(f"{DATA_DIR}/{subset}/label_file_{subset}.csv") #Neural_Motif
-OBJ_FT_DIR_val = f'{DATA_DIR}/{subset}/PENET/VisualObjectFeatures' # run extract_visual_features.py to get this
-PRED_FT_DIR_val = f'{DATA_DIR}/{subset}/PENET/VisualPredFeatures' # run extract_visual_features.py to get this
+df_val = pd.read_csv(f"{DATA_DIR}/{subset}/label_file_{subset}.csv")
+OBJ_FT_DIR_val = f'{DATA_DIR}/{subset}/VisualObjectFeatures' # run extract_visual_features.py to get this
+PRED_FT_DIR_val = f'{DATA_DIR}/{subset}/VisualPredFeatures' # run extract_visual_features.py to get this
 
-init_embed_model_weight_cap = joblib.load(f'{DATA_DIR}/train_{size}/init_glove_embedding_weight_lowered_train_{size}.joblib')
+init_embed_model_weight_cap = joblib.load(f'{DATA_DIR}/train/init_glove_embedding_weight_lowered_train_80000.joblib')
 init_embed_model_weight_cap = torch.FloatTensor(init_embed_model_weight_cap)
 init_embed_model_weight_img_obj = joblib.load(f'{DATA_DIR}/init_glove_embedding_weight_lowered_img_obj.joblib')
 init_embed_model_weight_img_obj = torch.FloatTensor(init_embed_model_weight_img_obj)
@@ -79,6 +80,7 @@ class Trainer():
         self.numb_epoch = info_dict['numb_epoch'] # 10 - number of epoch
         self.batch_size = info_dict['batch_size']
         self.save_dir = info_dict['save_dir']
+        self.save_path = info_dict.get('checkpoint', '')
         self.optimizer_choice = info_dict['optimizer']
         self.learning_rate = info_dict['learning_rate']
         self.grad_clip = info_dict['grad_clip']
@@ -86,12 +88,19 @@ class Trainer():
         self.checkpoint = info_dict['checkpoint']
         self.visual_backbone = info_dict['visual_backbone']
         self.include_pred_ft = info_dict['include_pred_ft']
-        self.margin_matrix_loss = info_dict['margin_matrix_loss']
         self.freeze = info_dict['freeze']
-        
+        self.tokenizer = AutoTokenizer.from_pretrained(info_dict['NLI_id'])
+        self.obj_ft_dir = info_dict['obj_ft_dir']
+        self.pred_ft_dir = info_dict['pred_ft_dir']
+        self.OOC_type = info_dict['OOC_type']
+        self.data_train_path = f"{DATA_DIR}/train/{self.OOC_type}"
+        images_data_train = joblib.load(f"{self.data_train_path}/cheapfake_lowered_images_data_{info_dict['visual_id']}.joblib")
+        caps_data_train = joblib.load(f"{self.data_train_path}/cheapfake_train_lowered_caps_data.joblib")
+        df_train = pd.read_csv(f"{self.data_train_path}/train_{self.OOC_type}_quick.csv")
         self.datatrain = PairGraphPrecomputeDataset(image_sgg=images_data_train, caption_sgg=caps_data_train, 
                                                     word2idx_cap=word2idx_cap, word2idx_img_obj=word2idx_img_obj, word2idx_img_pred=word2idx_img_pred, 
-                                                    effnet=self.visual_backbone, samples=df_train)
+                                                    effnet=self.visual_backbone, samples=df_train, tokenizer=self.tokenizer,
+                                                    obj_ft_dir=self.obj_ft_dir, pred_ft_dir=self.pred_ft_dir)
         
         ## DECLARE MODEL
         self.model = md.CheapFake_Detection(info_dict=self.info_dict)
@@ -159,8 +168,6 @@ class Trainer():
     # ---------- RUN TRAIN ---------
     def train(self):
         ## LOAD PRETRAINED MODEL ##
-        self.load_trained_model()
-        
         scheduler = ReduceLROnPlateau(self.optimizer, factor = 0.2, patience=5, 
                                       mode = 'min', verbose=True, min_lr=1e-6)
         #scheduler_remaining_models = ReduceLROnPlateau(self.optimizer_remaining_models, factor = 0.5, patience=10, 
@@ -169,10 +176,6 @@ class Trainer():
         ## LOSS FUNCTION ##
         loss = BCELoss()
         loss = loss.to(device)
-        #cos_loss = CosineEmbeddingLoss(margin=0.4)
-        #cos_loss = cos_loss.to(device)
-        loss_geb = ContrastiveLoss_CosineSimilarity(margin=self.margin_matrix_loss, max_violation=True)
-        loss_geb = loss_geb.to(device)
 
         ## REPORT ##
         timestampTime = time.strftime("%H%M%S")
@@ -183,8 +186,8 @@ class Trainer():
         self.extract_info()
         
         ## TRAIN THE NETWORK ##
-        f1_max = 0
-        #lossMIN = 100000
+        #f1_max = 0
+        lossMIN = 100000
         flag = 0
         count_change_loss = 0
         
@@ -198,7 +201,7 @@ class Trainer():
             # Update learning rate at each epoch
             #self.adjust_learning_rate(epochID)
             
-            lossTrain = self.train_epoch(loss, loss_geb, writer, epochID)
+            lossTrain = self.train_epoch(loss, writer, epochID)
             # lossVal = self.val_epoch(epochID, loss_matrix)
             with torch.no_grad():
                 lossVal = self.validate_loss(images_data_val, caps_data_val, df_val, OBJ_FT_DIR_val, PRED_FT_DIR_val, loss)
@@ -215,15 +218,17 @@ class Trainer():
             #scheduler_remaining_models.step(lossVal)
             info_txt = f"Epoch {epochID + 1}/{self.numb_epoch} [{timestampEND}]"
             
-            if lossVal > f1_max:# < lossMIN
+            if lossVal < lossMIN:# < lossMIN > f1_max
                 count_change_loss = 0
-                if lossVal > f1_max:
-                    f1_max = lossVal
-                    #lossMIN = lossVal
+                if lossVal < lossMIN:
+                    #f1_max = lossVal
+                    lossMIN = lossVal
+                self.save_path = f"{self.save_dir}/{self.model_name}-{self.timestampLaunch}.pth.tar"
                 torch.save({'epoch': epochID, \
                             'model_state_dict': self.model.state_dict(),
                             'optimizer_state_dict': self.optimizer.state_dict(),
-                            'best_loss': f1_max}, f"{self.save_dir}/{self.model_name}-{self.timestampLaunch}.pth.tar")#lossMIN f1_max
+                            'best_loss': lossMIN}, 
+                            self.save_path)#lossMIN f1_max
                 info_txt = info_txt + f" [SAVE]\nLoss Val: {lossVal}"
                
             else:
@@ -231,27 +236,27 @@ class Trainer():
                 info_txt = info_txt + f"\nLoss Val: {lossVal}"   
             print(info_txt)
             info_txt = info_txt + f"\nLoss Train: {round(lossTrain,6)}\n----------\n"
-            
             with open(f"{self.save_dir}/{self.model_name}-{self.timestampLaunch}-REPORT.log", "a") as f_log:
                 f_log.write(info_txt)
                     
             writer.add_scalars('Loss Epoch', {'train': lossTrain}, epochID)
             writer.add_scalars('Loss Epoch', {'train': lossTrain}, epochID)
             writer.add_scalars('Loss Epoch', {'val': lossVal}, epochID)
-            writer.add_scalars('Loss Epoch', {'val-best': f1_max}, epochID)#lossMIN
+            writer.add_scalars('Loss Epoch', {'val-best': lossMIN}, epochID)#lossMIN
             
             current_lr = self.optimizer.param_groups[0]['lr']
             writer.add_scalar('Learning Rate', current_lr, epochID)
 
-            if count_change_loss >= 15:
+            if count_change_loss >= 10:
                 print(f'Early stopping: {count_change_loss} epoch not decrease the loss')
                 break
 
         # f_log.close()
         writer.close()
+        return self.save_path
     
     # ---------- TRAINING 1 EPOCH ---------
-    def train_epoch(self, loss, loss_geb, writer, epochID):
+    def train_epoch(self, loss, writer, epochID):
         '''
         numb_sample = len(self.datatrain)
         temp = [x['label'] for x in self.datatrain]
@@ -299,12 +304,6 @@ class Trainer():
             predict_labels = self.model(img_p_o_ft, img_p_p_ft, img_p_o, img_p_p, img_p_e, img_p_numb_o, img_p_numb_p, cap_p_s, cap_p_m, cap_p_p_1, cap_p_e_1, cap_p_len_p_1, cap_p_numb_o_1, cap_p_numb_p_1, cap_p_p_2, cap_p_e_2, cap_p_len_p_2, cap_p_numb_o_2, cap_p_numb_p_2)
             lossvalue_BCE = loss(predict_labels, labels)
 
-            #Constrative loss
-            gcn_image_objects, gcn_image_predicates = self.model.feature_extraction.image_branch_model(img_p_o_ft, img_p_p_ft, img_p_o, img_p_p, img_p_e)
-            eb_cap_objects_1, eb_cap_edges_1 = self.model.feature_extraction.cap_branch_model(cap_p_p_1, cap_p_e_1, cap_p_len_p_1, cap_p_numb_o_1, cap_p_numb_p_1)
-            image_geb = self.model.feature_extraction.graph_embed_model(gcn_image_objects, gcn_image_predicates, img_p_numb_o, img_p_numb_p) 
-            caption_geb_1 = self.model.feature_extraction.graph_embed_model(eb_cap_objects_1, eb_cap_edges_1, cap_p_numb_o_1, cap_p_numb_p_1)
-            constrative_loss = loss_geb(image_geb, caption_geb_1)
             #cosine_loss = cos_loss(image_geb, caption_geb_2, match_labels)
             #print(batchID)
                 
@@ -313,7 +312,7 @@ class Trainer():
             # img_obj [batch_size, max obj, dim], img_pred [batch_size, max pred, dim]
    
             #lossvalue = loss(predict_labels, labels)
-            lossvalue = lossvalue_BCE + constrative_loss
+            lossvalue = lossvalue_BCE
 
             #print(lossvalue)
             
@@ -327,7 +326,7 @@ class Trainer():
             self.optimizer.step()
             loss_report += lossvalue.item()
             count += 1
-            if (batchID+1) % 600 == 0:
+            if (batchID+1) % 300 == 0:
                 print(f"Batch Idx: {batchID+1} / {len(dataloadertrain)}: Loss Train {round(loss_report/count, 6)}")
                 writer.add_scalars('Loss Training Iter', {'loss': loss_report/count}, epochID * np.floor(numb_iter/20) + np.floor((batchID+1)/20))
                 
@@ -339,8 +338,8 @@ class Trainer():
         data_val = PairGraphPrecomputeDataset(image_sgg=image_sgg, caption_sgg=caption_sgg, 
                                                     word2idx_cap=word2idx_cap, word2idx_img_obj=word2idx_img_obj, word2idx_img_pred=word2idx_img_pred, 
                                                     obj_ft_dir=obj_ft_dir, pred_ft_dir=pred_ft_dir,
-                                                    effnet=self.visual_backbone, samples=df)
-        dataloaderval = make_PairGraphPrecomputeDataLoader(data_val, batch_size=32, num_workers=0)
+                                                    effnet=self.visual_backbone, samples=df, tokenizer=self.tokenizer)
+        dataloaderval = make_PairGraphPrecomputeDataLoader(data_val, batch_size=self.batch_size, num_workers=0)
         self.model.eval()
         total_loss = 0
         predicted_labels = np.array([])
@@ -369,9 +368,9 @@ class Trainer():
                 predicted_labels = np.concatenate((predicted_labels, predict_labels.cpu().numpy().flatten()))#.item
                 true_labels = np.concatenate((true_labels, labels.cpu().numpy().flatten()))#.item
                 lossvalue = loss(predict_labels.to(device), labels.to(device))
-                #total_loss += lossvalue.item()
-        result = calculate_metric(true_labels, predicted_labels)
-        return result['f1'] #total_loss #
+                total_loss += lossvalue.item()
+        #result = calculate_metric(true_labels, predicted_labels)
+        return total_loss
 
 # ----- EVALUATOR -----
 class Evaluator():
@@ -394,6 +393,7 @@ class Evaluator():
         self.visual_backbone = info_dict['visual_backbone']
         self.include_pred_ft = info_dict['include_pred_ft']
         self.freeze = info_dict['freeze']
+        self.tokenizer = AutoTokenizer.from_pretrained(info_dict['NLI_id'])
         
         ## DECLARE MODEL
         self.model = md.CheapFake_Detection(info_dict=self.info_dict)
@@ -415,7 +415,7 @@ class Evaluator():
         print('---------- VALIDATE RESULT ----------')
         data_val = PairGraphPrecomputeDataset(image_sgg=image_sgg, caption_sgg=caption_sgg, 
                                                     word2idx_cap=word2idx_cap, word2idx_img_obj=word2idx_img_obj, word2idx_img_pred=word2idx_img_pred, 
-                                                    effnet=self.visual_backbone, samples=df_val,
+                                                    effnet=self.visual_backbone, samples=df_val, tokenizer=self.tokenizer,
                                                     obj_ft_dir=obj_ft_dir, pred_ft_dir=pred_ft_dir)
         dataloaderval = make_PairGraphPrecomputeDataLoader(data_val, batch_size=1, num_workers=0)
         self.model.eval()
@@ -451,7 +451,7 @@ class Evaluator():
         data_val = PairGraphPrecomputeDataset(image_sgg=image_sgg, caption_sgg=caption_sgg, 
                                                     word2idx_cap=word2idx_cap, word2idx_img_obj=word2idx_img_obj, word2idx_img_pred=word2idx_img_pred, 
                                                     effnet=self.visual_backbone, samples=df_val, 
-                                                    obj_ft_dir=obj_ft_dir, pred_ft_dir=pred_ft_dir)
+                                                    obj_ft_dir=obj_ft_dir, pred_ft_dir=pred_ft_dir, tokenizer=self.tokenizer)
         dataloaderval = make_PairGraphPrecomputeDataLoader(data_val, batch_size=1, num_workers=0, shuffle=False)
         self.model.eval()
         predicted_labels = np.array([])

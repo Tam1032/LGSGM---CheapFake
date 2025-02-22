@@ -6,21 +6,21 @@ device = torch.device('cuda:0')
 #device = torch.device('cpu')
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 from efficientnet_pytorch import EfficientNet
-from transformers import AutoModelForSequenceClassification, AutoModel
+from transformers import AutoModelForSequenceClassification
 from transformers import AutoTokenizer
 
 DATA_DIR = './Data'
 subset = 'train'
 
-init_embed_model_weight_cap = joblib.load(f'{DATA_DIR}/train_160000/init_glove_embedding_weight_lowered_train_160000.joblib')
+init_embed_model_weight_cap = joblib.load(f'{DATA_DIR}/train/init_glove_embedding_weight_lowered_train_80000.joblib')
 init_embed_model_weight_cap = torch.FloatTensor(init_embed_model_weight_cap)
 init_embed_model_weight_img_obj = joblib.load(f'{DATA_DIR}/init_glove_embedding_weight_lowered_img_obj.joblib')
 init_embed_model_weight_img_obj = torch.FloatTensor(init_embed_model_weight_img_obj)
 init_embed_model_weight_img_pred = joblib.load(f'{DATA_DIR}/init_glove_embedding_weight_lowered_img_pred.joblib')
 init_embed_model_weight_img_pred = torch.FloatTensor(init_embed_model_weight_img_pred)
 
-model_name = "MoritzLaurer/DeBERTa-v3-base-mnli" #"ynie/roberta-large-snli_mnli_fever_anli_R1_R2_R3-nli"
-tokenizer = AutoTokenizer.from_pretrained(model_name)
+#model_name = "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
+#tokenizer = AutoTokenizer.from_pretrained(model_name)
 
 # An ordinary implementation of Swish function
 class Swish(nn.Module):
@@ -360,54 +360,6 @@ class GCN_Network(nn.Module):
         
         return list_emb_o[self.numb_gcn_layers], list_emb_p[self.numb_gcn_layers]
 
-class GraphEmb(nn.Module):
-    def __init__(self, node_dim=1024, edge_dim=1024, fusion_dim=None, activate_fn='swish', batchnorm=True, dropout=None):
-        '''
-        Embed a graph with nodes (node_dim) and edges (edge_dim) into a vector
-        '''
-        super(GraphEmb, self).__init__()
-        self.node_dim = node_dim
-        self.edge_dim = edge_dim
-        if fusion_dim is None:
-            self.fusion = None
-        else:
-            self.fusion = MLP(input_dim=self.node_dim+self.edge_dim, hidden_dim=[], output_dim=fusion_dim,\
-                              activate_fn=activate_fn, batchnorm=batchnorm, dropout=dropout,\
-                              perform_at_end=False, use_residual=False)
-        self.att_layers_obj = ATT_Layer(unit_dim=node_dim, init=True)
-        self.att_layers_pred = ATT_Layer(unit_dim=edge_dim, init=True)
-        
-    def forward(self, eb_nodes, eb_edges, numb_nodes, numb_edges):
-        '''
-        eb_nodes [n_node, node_dims]
-        eb_edges [n_edge, edge_dims]
-        numb_nodes [list batch] number of nodes in each graph
-        numb_edges [list batch] number of edges in each graph
-        '''
-        count_o = 0 # object = node
-        count_p = 0 # pred = edges
-        geb = torch.zeros(len(numb_nodes), self.node_dim+self.edge_dim).to(device)
-        for idx_batch in range(len(numb_nodes)):
-            numb_obj = numb_nodes[idx_batch]
-            if numb_obj > 0:
-                cur_e_o = eb_nodes[count_o:(count_o+numb_obj)]
-            else:
-                cur_e_o = torch.zeros((1,self.node_dim)).to(device)
-            count_o += numb_obj
-            graph_emb_o_l = self.att_layers_obj(cur_e_o).view(1,-1) # convert to [1, dim]
-
-            numb_pred = numb_edges[idx_batch]
-            if numb_pred > 0:
-                cur_e_p = eb_edges[count_p:(count_p+numb_pred)]
-            else:
-                cur_e_p = torch.zeros((1,self.edge_dim)).to(device)
-            count_p += numb_pred
-            graph_emb_p_l = self.att_layers_pred(cur_e_p).view(1,-1) # convert to [1, dim]
-            geb[idx_batch] = torch.cat((graph_emb_o_l, graph_emb_p_l), dim=1)
-        if self.fusion is not None:
-            geb = self.fusion(geb)
-        return geb
-
 # MODEL FOR IMAGE BRANCH (EXCEPT THE EMBEDDING PART)    
 class ImageModel(nn.Module):
     # receive the visual images, objects, predicates, edges
@@ -483,7 +435,6 @@ class ImageModel(nn.Module):
         else:
             fusion_pred = eb_pred
         objects, predicates = self.gcn_model(fusion_objs, fusion_pred, edges)
-        #geb = self.graph_embed_model(objects, predicates, num_object, num_predicates)
         return objects, predicates
     
     
@@ -512,22 +463,28 @@ class WordEmbedding(nn.Module):
 
 # Sentence Model (RNN)
 class SentenceModel(nn.Module):
-    def __init__(self):
+    def __init__(self, NLI_id):
         super(SentenceModel, self).__init__()
-        #model = AutoModelForSequenceClassification.from_pretrained("MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli")
-        #model = AutoModelForSequenceClassification.from_pretrained("ynie/roberta-large-snli_mnli_fever_anli_R1_R2_R3-nli")
-        model = AutoModelForSequenceClassification.from_pretrained("MoritzLaurer/DeBERTa-v3-base-mnli")#AutoModel
+        self.NLI_id = NLI_id
+        model = AutoModelForSequenceClassification.from_pretrained(NLI_id)
         for param in model.parameters():
             param.requires_grad_(False)
-        #self.model = model.model.to(device)#.roberta
-        self.deberta = model.deberta.to(device)
-        self.pooler = model.pooler.to(device)
-        
+        if "DeBERTa" in NLI_id:
+            self.model = model.deberta.to(device)
+            self.pooler = model.pooler.to(device)
+        elif "roberta" in NLI_id:
+            self.model = model.roberta.to(device)
+        else:
+            self.model = model.model.to(device)
+
     def forward(self, input_ids, attention_mask):
-        outputs = self.deberta(input_ids=input_ids.to(device), attention_mask=attention_mask.to(device))
-        #outputs = self.model(input_ids=input_ids.to(device), attention_mask=attention_mask.to(device))
-        pooled_output = self.pooler(outputs.last_hidden_state)
-        #pooled_output = outputs.last_hidden_state[:, 0] #.pooler_output
+        outputs = self.model(input_ids=input_ids.to(device), attention_mask=attention_mask.to(device))
+        if "DeBERTa" in self.NLI_id:
+            pooled_output = self.pooler(outputs.last_hidden_state)
+        #elif "roberta" in self.NLI_id:
+            #pooled_output = outputs.last_hidden_state[:, 0]
+        else:
+            pooled_output = outputs.last_hidden_state[:, 0]
         # return a tensor of size 768
         return pooled_output
 
@@ -575,7 +532,55 @@ class RelsModel(nn.Module):
             #final_hidden_state = torch.cat((h_1, h_2), 1)  # Concatenate both states
             
         return final_hidden_state, out_unpacked_combine
+    
+class GraphEmb(nn.Module):
+    def __init__(self, node_dim=1024, edge_dim=1024, fusion_dim=None, activate_fn='swish', batchnorm=True, dropout=None):
+        '''
+        Embed a graph with nodes (node_dim) and edges (edge_dim) into a vector
+        '''
+        super(GraphEmb, self).__init__()
+        self.node_dim = node_dim
+        self.edge_dim = edge_dim
+        if fusion_dim is None:
+            self.fusion = None
+        else:
+            self.fusion = MLP(input_dim=self.node_dim+self.edge_dim, hidden_dim=[], output_dim=fusion_dim,\
+                              activate_fn=activate_fn, batchnorm=batchnorm, dropout=dropout,\
+                              perform_at_end=False, use_residual=False)
+        self.att_layers_obj = ATT_Layer(unit_dim=node_dim, init=True)
+        self.att_layers_pred = ATT_Layer(unit_dim=edge_dim, init=True)
+        
+    def forward(self, eb_nodes, eb_edges, numb_nodes, numb_edges):
+        '''
+        eb_nodes [n_node, node_dims]
+        eb_edges [n_edge, edge_dims]
+        numb_nodes [list batch] number of nodes in each graph
+        numb_edges [list batch] number of edges in each graph
+        '''
+        count_o = 0 # object = node
+        count_p = 0 # pred = edges
+        geb = torch.zeros(len(numb_nodes), self.node_dim+self.edge_dim).to(device)
+        for idx_batch in range(len(numb_nodes)):
+            numb_obj = numb_nodes[idx_batch]
+            if numb_obj > 0:
+                cur_e_o = eb_nodes[count_o:(count_o+numb_obj)]
+            else:
+                cur_e_o = torch.zeros((1,self.node_dim)).to(device)
+            count_o += numb_obj
+            graph_emb_o_l = self.att_layers_obj(cur_e_o).view(1,-1) # convert to [1, dim]
 
+            numb_pred = numb_edges[idx_batch]
+            if numb_pred > 0:
+                cur_e_p = eb_edges[count_p:(count_p+numb_pred)]
+            else:
+                cur_e_p = torch.zeros((1,self.edge_dim)).to(device)
+            count_p += numb_pred
+            graph_emb_p_l = self.att_layers_pred(cur_e_p).view(1,-1) # convert to [1, dim]
+            geb[idx_batch] = torch.cat((graph_emb_o_l, graph_emb_p_l), dim=1)
+        if self.fusion is not None:
+            geb = self.fusion(geb)
+        return geb
+        
 class SentenceNodeModel(nn.Module):
     def __init__(self, total_cap_words, gcn_output_dim=300, gcn_hidden_dim=[300], numb_gcn_layers=5, batchnorm=True, dropout=None, bidirectional=False, activate_fn='swish', unit_dim=300, init_weight=None, rnn_numb_layers=2, rnn_bidirectional=False, rnn_structure="GRU"):
         super(SentenceNodeModel, self).__init__()
@@ -609,9 +614,9 @@ class SentenceNodeModel(nn.Module):
         eb_cap_objects, eb_cap_edges = self.gcn_model_cap(eb_cap_objects, eb_cap_edges, captions_edges)
         #caption_geb = self.graph_embed_model(eb_cap_objects, eb_cap_edges, caption_number_objects, caption_number_edges)
         return eb_cap_objects, eb_cap_edges
-        
+
 class FeatureExtraction(nn.Module):
-    def __init__(self, info_dict):
+    def __init__(self, info_dict, MLP_dim):
         super(FeatureExtraction, self).__init__()
         self.info_dict = info_dict
         self.numb_sample = info_dict['numb_sample'] # 50000 - number of training sample in 1 epoch
@@ -668,8 +673,8 @@ class FeatureExtraction(nn.Module):
                                              batchnorm=self.batchnorm, dropout=self.dropout)
                                              
         self.mlp = MLP(input_dim=self.gcn_output_dim*6, 
-                   hidden_dim=[2048, 1024],#[2048, 1024], 
-                   output_dim=768,  #768
+                   hidden_dim=[2048],#[2048, 1024], 
+                   output_dim=MLP_dim,  #768
                    #activate_fn='relu',
                    batchnorm=self.batchnorm,
                    dropout=self.dropout,
@@ -695,27 +700,54 @@ class CheapFake_Detection(nn.Module):
     def __init__(self, info_dict):
         super(CheapFake_Detection, self).__init__()
         self.info_dict = info_dict
-        self.feature_extraction = FeatureExtraction(info_dict)
-        self.sentence_model = SentenceModel()
-        self.MLP = MLP(input_dim=768*2, #768*2
-                   hidden_dim=[192, 48], #192, 48
+        self.NLI_id = info_dict['NLI_id']
+        self.MLP_dim = 768 if "DeBERTa" in self.NLI_id else 1024
+        self.feature_extraction = FeatureExtraction(info_dict, self.MLP_dim)
+        self.sentence_model = SentenceModel(self.NLI_id)
+        self.MLP = MLP(input_dim=self.MLP_dim*2, 
+                   hidden_dim=[192, 48], 
                    output_dim=1,  
                    #activate_fn='relu',
                    batchnorm=True,
                    dropout=0.5,
                    perform_at_end=False)
         self.out_activation = nn.Sigmoid()
+
     def forward(self, images_objects, images_predicates, list_objects, list_predicates, edges, image_num_objects, image_num_predicates, captions_tokenize, caption_mask, captions_predicates_1, captions_edges_1, captions_length_1, caption_number_objects_1, caption_number_edges_1, captions_predicates_2, captions_edges_2, captions_length_2, caption_number_objects_2, caption_number_edges_2):
         graph_features = self.feature_extraction(images_objects, images_predicates, list_objects, list_predicates, edges, image_num_objects, image_num_predicates, captions_predicates_1, captions_edges_1, captions_length_1, caption_number_objects_1, caption_number_edges_1, captions_predicates_2, captions_edges_2, captions_length_2, caption_number_objects_2, caption_number_edges_2)
         if torch.isnan(graph_features).any():
             for caption in captions_tokenize:
                 print(tokenizer.decode(caption))
-                
-        nlp_features = self.sentence_model(captions_tokenize, caption_mask)
+        try:
+            nlp_features = self.sentence_model(captions_tokenize, caption_mask)
+        except:
+            print("Length caption 1:", len(caption_mask[0]))
+            print("Length caption 2:", len(caption_mask[1]))
+            tokenizer = AutoTokenizer.from_pretrained(self.NLI_id)
+            print("Caption 1:", tokenizer.decode(captions_tokenize[0]))
+            print("Caption 2:", tokenizer.decode(captions_tokenize[1]))
+            nlp_features = self.sentence_model(captions_tokenize, caption_mask)
+        #print("Graph features shape:", graph_features.shape)
+        #print("NLI feature shape:", nlp_features.shape)
         x = torch.cat([graph_features,nlp_features], dim=1)
+        #print(x.shape)
         x = self.MLP(x) #x
         x = self.out_activation(x)
         return x
+
+    def load_pretrain(self, weights_path):
+        pretrained_dict = torch.load(weights_path)['model_state_dict']
+        feature_weights = dict()
+        model_dict = self.feature_extraction.state_dict()
+        # 1. filter out unnecessary keys
+        for key in pretrained_dict:
+            if "feature_extraction" in key and "mlp" not in key:
+                new_key = key.replace("feature_extraction.","")
+                feature_weights[new_key] = pretrained_dict[key]
+        # 2. overwrite entries in the existing state dict
+        model_dict.update(feature_weights) 
+        # 3. load the new state dict
+        self.feature_extraction.load_state_dict(model_dict)
 
 # Discimator between 2 vectors (or 2 embeded graphs)
 class Discriminator(nn.Module):

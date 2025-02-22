@@ -18,8 +18,8 @@ device = torch.device('cuda:0')
 import torchvision.transforms as transforms
 from efficientnet_pytorch import EfficientNet
 
-IMAGE_DIR = 'D:/Research Data/caption_image/public_test_mmsys' # list of images
-DATA_DIR = './Data'
+IMAGE_DIR = './Cheapfake_Images/val' # list of images
+DATA_DIR = 'D:/Code/Data_Advance' #'./Data'
 
 list_image_size = [224, 240, 260, 300, 380, 456, 528, 600] # wrt efficientnet b0 to b7
 image_size = list_image_size[5]
@@ -143,8 +143,8 @@ def main_obj(subset='train', effnet='b0', size="4000"):
     #f = open(f"{DATA_DIR}/results1.json")
     #images_data = json.load(f)
     #f.close()
-    images_data = joblib.load(f"{DATA_DIR}/cheapfake_{subset}_lowered_images_data_neural_motif.joblib")
-    SAVE_DIR = f'{DATA_DIR}/{subset}/Neural_Motif/VisualObjectFeatures_{effnet}'
+    images_data = joblib.load(f"{DATA_DIR}/{subset}/cheapfake_{subset}_lowered_images_data.joblib")#_{size}
+    SAVE_DIR = f'{DATA_DIR}/{subset}/VisualObjectFeatures_{effnet}'
     dts = ImageDataset(images_data)
     dtld = make_ImageDataLoader(dts, transform_val, batch_size=4, shuffle=False)
     visual_ft_model = Visual_Feature(effnet)
@@ -178,8 +178,8 @@ def main_pred(subset='train', effnet='b0', size='4000'):
     #f = open(f"{DATA_DIR}/results1.json")
     #images_data = json.load(f)
     #f.close()
-    images_data = joblib.load(f"{DATA_DIR}/cheapfake_{subset}_lowered_images_data_neural_motif.joblib")
-    SAVE_DIR = f"{DATA_DIR}/{subset}/Neural_Motif/VisualPredFeatures_{effnet}"
+    images_data = joblib.load(f"{DATA_DIR}/{subset}/cheapfake_{subset}_lowered_images_data.joblib")
+    SAVE_DIR = f"{DATA_DIR}/{subset}/VisualPredFeatures_{effnet}"
     dts = ImagePredDataset(images_data)
     dtld = make_ImagePredDataLoader(dts, transform_val, batch_size=4, shuffle=False)
     visual_ft_model = Visual_Feature(effnet)
@@ -212,11 +212,11 @@ def main_pred(subset='train', effnet='b0', size='4000'):
                     
 print('Processing Obj ...')
 #main_obj(subset='train', effnet='b5', size="4000")
-#main_obj(subset='val', effnet='b5')
-main_obj(subset='test', effnet='b5')
+main_obj(subset='val', effnet='b5')
+#main_obj(subset='test', effnet='b5')
 
 print('Processing Pred ...')
 #main_pred(subset='train', effnet='b5', size="4000")
-#main_pred(subset='val', effnet='b5')
-main_pred(subset='test', effnet='b5')
+main_pred(subset='val', effnet='b5')
+#main_pred(subset='test', effnet='b5')
 

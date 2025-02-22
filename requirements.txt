@@ -5,3 +5,10 @@ tensorboardX
 pandas
 efficientnet_pytorch
 sentencepiece
+opencv-python
+torch
+torch-summary
+torchvision
+joblib
+tqdm
+wandb
